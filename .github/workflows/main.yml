@@ -1,0 +1,30 @@
+name: Build APK
+on: [push, workflow_dispatch]
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+      - name: Build
+        run: |
+          if [ ! -f build.sh ]; then
+            Z=$(ls *.zip | grep -v '^icons.zip$' | head -1)
+            unzip -oq "$Z" -d _u
+            cp "$(find _u -name build.sh | head -1)" build.sh
+          fi
+          bash build.sh
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: KG Traders APK ${{ github.run_number }}
+          files: _proj/app/build/outputs/apk/release/*.apk
+          make_latest: true
