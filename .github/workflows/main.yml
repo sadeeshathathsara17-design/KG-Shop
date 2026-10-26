@@ -2,29 +2,75 @@ name: Build APK
 on: [push, workflow_dispatch]
 permissions:
   contents: write
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
-      - name: Build
+
+      - name: Unpack the uploaded zip (if the files are still inside a zip)
         run: |
-          if [ ! -f build.sh ]; then
-            Z=$(ls *.zip | grep -v '^icons.zip$' | head -1)
-            unzip -oq "$Z" -d _u
-            cp "$(find _u -name build.sh | head -1)" build.sh
+          if [ ! -f app-build.gradle ]; then
+            ZIP=$(ls *.zip 2>/dev/null | grep -v '^icons.zip$' | head -1)
+            if [ -z "$ZIP" ]; then
+              echo "::error title=Files missing::app-build.gradle not found. Upload all project files (or the whole KG-Traders-GitHub-APK.zip) to the repo."
+              exit 1
+            fi
+            mkdir -p _u && unzip -oq "$ZIP" -d _u
+            DIR=$(dirname "$(find _u -name app-build.gradle | head -1)")
+            shopt -s dotglob
+            for f in "$DIR"/*; do
+              [ "$(basename "$f")" = ".github" ] && continue
+              cp -r "$f" .
+            done
+            rm -f "$ZIP"; rm -rf _u
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Auto-extract project files" || true
+            git push origin "HEAD:${GITHUB_REF_NAME}" || echo "(could not save the extracted files - the build continues)"
           fi
-          bash build.sh
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: apk-${{ github.run_number }}
-          name: KG Traders APK ${{ github.run_number }}
-          files: _proj/app/build/outputs/apk/release/*.apk
-          make_latest: true
+
+      - name: Assemble the Android project
+        run: |
+          set -e
+          P=_proj; rm -rf $P
+          mkdir -p $P/app/src/main/java/lk/kgtraders/app $P/app/src/main/assets $P/app/src/main/res/values $P/app/src/main/res/xml
+          cp build.gradle settings.gradle gradle.properties kgtraders.keystore $P/
+          cp app-build.gradle    $P/app/build.gradle
+          cp AndroidManifest.xml $P/app/src/main/AndroidManifest.xml
+          cp MainActivity.java   $P/app/src/main/java/lk/kgtraders/app/MainActivity.java
+          cp index.html          $P/app/src/main/assets/index.html
+          cp strings.xml styles.xml $P/app/src/main/res/values/
+          cp file_paths.xml      $P/app/src/main/res/xml/file_paths.xml
+          unzip -oq icons.zip -d $P/app/src/main/res/
+          find $P -type f | sort
+
+      - name: Build the APK
+        working-directory: _proj
+        run: |
+          set +e
+          gradle assembleRelease --no-daemon --stacktrace > ../build.log 2>&1
+          RC=$?
+          tail -n 60 ../build.log
+          if [ $RC -ne 0 ]; then
+            MSG=$(grep -E "error:|What went wrong|Execution failed|AAPT|Could not|FAILED|not found" -A3 ../build.log | head -30 | tr '\n' ' ' | cut -c1-1200)
+            echo "::error title=Gradle build failed::$MSG"
+            exit $RC
+          fi
+
+      - name: Publish the APK to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=$(ls _proj/app/build/outputs/apk/release/*.apk | head -1)
+          gh release create "apk-${{ github.run_number }}" "$APK" --title "KG Traders APK #${{ github.run_number }}" --notes "Build #${{ github.run_number }}" --latest
