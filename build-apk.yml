@@ -1,0 +1,83 @@
+name: Build KG Traders APK
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Upload just the ONE zip file -> this step unpacks it and saves the files into the repo
+      - name: Auto-extract the uploaded zip
+        run: |
+          set -e
+          OUTER=$(ls *.zip 2>/dev/null | grep -v '^icons.zip$' | head -1 || true)
+          if [ -n "$OUTER" ] && [ ! -f app-build.gradle ]; then
+            echo "Extracting $OUTER"
+            mkdir -p _upload
+            unzip -o "$OUTER" -d _upload
+            DIR=$(dirname "$(find _upload -name app-build.gradle | head -1)")
+            shopt -s dotglob
+            for f in "$DIR"/*; do
+              b=$(basename "$f")
+              [ "$b" = ".github" ] && continue
+              cp -r "$f" .
+            done
+            rm -f "$OUTER"; rm -rf _upload
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Auto-extract project files" || true
+            git push origin "HEAD:${GITHUB_REF_NAME}" || echo "Could not save the extracted files to the repo (the build continues)"
+          fi
+          echo "SRC=." >> "$GITHUB_ENV"
+
+      - name: Assemble the Android project
+        run: |
+          set -e
+          P=_proj
+          mkdir -p $P/app/src/main/java/lk/kgtraders/app $P/app/src/main/assets $P/app/src/main/res/values $P/app/src/main/res/xml
+          cp "$SRC/build.gradle" "$SRC/settings.gradle" "$SRC/gradle.properties" "$SRC/kgtraders.keystore" $P/
+          cp "$SRC/app-build.gradle"   $P/app/build.gradle
+          cp "$SRC/AndroidManifest.xml" $P/app/src/main/AndroidManifest.xml
+          cp "$SRC/MainActivity.java"  $P/app/src/main/java/lk/kgtraders/app/MainActivity.java
+          cp "$SRC/index.html"         $P/app/src/main/assets/index.html
+          cp "$SRC/strings.xml" "$SRC/styles.xml" $P/app/src/main/res/values/
+          cp "$SRC/file_paths.xml"     $P/app/src/main/res/xml/file_paths.xml
+          unzip -o "$SRC/icons.zip" -d $P/app/src/main/res/
+          find $P -type f | sort
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+
+      - name: Build the APK
+        working-directory: _proj
+        run: gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Keep the APK as a build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: KG-Traders-APK
+          path: _proj/app/build/outputs/apk/release/*.apk
+
+      # Easy download on a phone: Releases page -> latest -> the .apk
+      - name: Publish to Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-${{ github.run_number }}
+          name: KG Traders APK #${{ github.run_number }}
+          files: _proj/app/build/outputs/apk/release/*.apk
+          make_latest: true

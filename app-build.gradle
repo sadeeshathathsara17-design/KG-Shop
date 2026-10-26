@@ -1,0 +1,54 @@
+plugins {
+    id 'com.android.application'
+}
+
+base {
+    archivesName = 'KG-Traders-v3.2'
+}
+
+android {
+    namespace 'lk.kgtraders.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'lk.kgtraders.app'
+        minSdk 24
+        targetSdk 34
+        versionCode 32
+        versionName '3.2'
+    }
+
+    signingConfigs {
+        release {
+            storeFile rootProject.file('kgtraders.keystore')
+            storePassword 'kgtraders'
+            keyAlias 'kgtraders'
+            keyPassword 'kgtraders'
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+        }
+        debug {
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    lint {
+        abortOnError false
+        checkReleaseBuilds false
+    }
+}
+
+dependencies {
+    implementation 'androidx.core:core:1.13.1'
+    implementation 'androidx.webkit:webkit:1.11.0'
+}
